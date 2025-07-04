@@ -1,0 +1,362 @@
+<style>
+    body {
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+      background-color: #333;
+    }
+    #av-wrapper {
+
+    width: 100vw;
+    height: 100vh;
+    max-width: calc(100vh * 9 / 16);
+    aspect-ratio: 9 / 16;
+    background: transparent;
+    position: relative;
+    overflow: hidden;
+    margin: auto;
+    /* padding: 20px; */
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+  }
+
+    canvas {
+      display: block;
+    }
+
+  #av-wrapper img {
+    width: 20vmin;
+    height: 20vmin;
+    object-fit: contain;
+    display: block;
+    margin: 0;
+    padding: 0;
+  }
+  </style>
+
+
+</head>
+<body>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <div id="av-wrapper">
+    <canvas id="gameCanvas"></canvas>
+    <img src="cutout.png" alt="Balanced Head Cutout" />
+  </div>
+
+
+<script>
+  const canvas = document.getElementById("gameCanvas");
+  const ctx = canvas.getContext("2d");
+
+  // Background music
+  const backgroundMusic = new Audio("background.mp3");
+  backgroundMusic.loop = true;
+  backgroundMusic.volume = 0.8;
+  backgroundMusic.play();
+
+  // Set canvas size to match the bounding box of #av-wrapper
+  const wrapperRect = document.getElementById("av-wrapper").getBoundingClientRect();
+  canvas.width = wrapperRect.width;
+  canvas.height = wrapperRect.height;
+
+  // Road properties
+  const laneCount = 3;
+  const laneMargin = 10;
+  const roadWidth = canvas.width / laneCount;
+  const roadHeight = canvas.height;
+  const roadColor = "#555";
+  const stripeColor = "#fff";
+
+  // Vehicle properties
+  const vehicleHeight = 90;
+  const vehicleWidth = vehicleHeight;
+  let vehicleX = 1 * roadWidth + laneMargin; // start in middle lane
+  let vehicleY = canvas.height - vehicleHeight - 40;
+  const vehicleSpeed = 15;
+
+  // Audio for bricks
+  const brickSounds = [
+    new Audio("brick1.mp3"),
+    new Audio("brick2.mp3"),
+    new Audio("brick3.mp3")
+  ];
+
+  // Brick properties
+  let bricks = [];
+  const brickHeight = 80;
+  const brickWidth = brickHeight;
+  const brickSpeed = 6;
+
+  // Key presses
+  let leftKey = false;
+  let rightKey = false;
+
+  let stripeOffset = 0;
+
+  let score = 0;
+  let gameOver = false;
+
+  const vehicleImg = new Image();
+  vehicleImg.src = "vehicle.png";
+
+  const obstacleImgs = [
+    "brick1.png",
+    "brick2.png",
+    "brick3.png"
+  ].map(src => {
+    const img = new Image();
+    img.src = src;
+    return img;
+  });
+
+  let imagesLoaded = 0;
+  const totalImages = obstacleImgs.length + 1;
+
+  function checkAllLoaded() {
+    imagesLoaded++;
+    if (imagesLoaded === totalImages) {
+      gameLoop();
+    }
+  }
+
+  vehicleImg.onload = checkAllLoaded;
+  obstacleImgs.forEach(img => img.onload = checkAllLoaded);
+
+  // Create three roads
+  function drawRoads() {
+    ctx.fillStyle = roadColor;
+    ctx.fillRect(0, 0, roadWidth, roadHeight); // Left road
+    ctx.fillRect(roadWidth * 1, 0, roadWidth, roadHeight); // Middle road
+    ctx.fillRect(roadWidth * 2, 0, roadWidth, roadHeight); // Right road
+
+    // Draw road stripes
+    ctx.strokeStyle = stripeColor;
+    ctx.lineWidth = 5;
+    ctx.setLineDash([30, 30]);
+    ctx.lineDashOffset = -stripeOffset;
+    ctx.beginPath();
+    ctx.moveTo(roadWidth, 0);
+    ctx.lineTo(roadWidth, canvas.height);
+    ctx.moveTo(roadWidth * 2, 0);
+    ctx.lineTo(roadWidth * 2, canvas.height);
+    ctx.stroke();
+  }
+
+  // Vehicle drawing with scale animation and red glow
+  function drawVehicle() {
+    // Animate scale from 0.8 to 1.0 based on time
+    const scale = 0.9 + 0.1 * Math.sin(Date.now() / 300);
+    const centerX = vehicleX + vehicleWidth / 2;
+    const centerY = vehicleY + vehicleHeight / 2;
+    const scaledWidth = vehicleWidth * scale;
+    const scaledHeight = vehicleHeight * scale;
+
+    ctx.save();
+    ctx.translate(centerX, centerY);
+    ctx.shadowColor = "red";
+    ctx.shadowBlur = 20;
+    ctx.drawImage(vehicleImg, -scaledWidth / 2, -scaledHeight / 2, scaledWidth, scaledHeight);
+    ctx.restore();
+  }
+
+  // Create random bricks, always leaving one lane clear
+  function createBricks() {
+    if (Math.random() < 0.05) {
+      const allLanes = [0, 1, 2];
+      const openLane = allLanes[Math.floor(Math.random() * 3)];
+
+      // Drop bricks in the remaining two lanes
+      const brickLanes = allLanes.filter(lane => lane !== openLane);
+
+      const shuffledImgs = obstacleImgs
+        .map(img => ({ img, sort: Math.random() }))
+        .sort((a, b) => a.sort - b.sort)
+        .map(entry => entry.img);
+
+      brickLanes.forEach((lane, index) => {
+        const brickX = lane * roadWidth + laneMargin;
+
+        const laneHasBrick = bricks.some(
+          brick => brick.x === brickX && brick.y < brickHeight * 2
+        );
+
+        if (!laneHasBrick) {
+          bricks.push({
+            x: brickX,
+            y: 0,
+            img: shuffledImgs[index % shuffledImgs.length]
+          });
+        }
+      });
+    }
+  }
+
+  // Draw bricks with scale animation on blast and border
+  function drawBricks() {
+    bricks.forEach((brick, index) => {
+      // Check collision with vehicle
+      if (!brick.blasting &&
+          brick.y + brickHeight >= vehicleY &&
+          brick.y <= vehicleY + vehicleHeight &&
+          brick.x < vehicleX + vehicleWidth &&
+          brick.x + brickWidth > vehicleX) {
+        brick.blasting = true;
+        brick.scale = 1;
+
+        // Stop all sounds
+        brickSounds.forEach(sound => {
+          sound.pause();
+          sound.currentTime = 0;
+        });
+
+        // Play related sound
+        const soundIndex = obstacleImgs.findIndex(img => img.src === brick.img.src);
+        if (brickSounds[soundIndex]) {
+          brickSounds[soundIndex].play();
+        }
+
+        score++;
+      }
+
+      // Animate scale-down blast
+      if (brick.blasting) {
+        brick.scale -= 0.1;
+        if (brick.scale <= 0) {
+          bricks.splice(index, 1);
+          return;
+        }
+      }
+
+      const drawWidth = brickWidth * (brick.scale || 1);
+      const drawHeight = brickHeight * (brick.scale || 1);
+      const offsetX = (brickWidth - drawWidth) / 2;
+      const offsetY = (brickHeight - drawHeight) / 2;
+
+      ctx.drawImage(brick.img, brick.x + offsetX, brick.y + offsetY, drawWidth, drawHeight);
+
+      // Flag-style border
+      let gradient;
+      if (brick.img.src.includes("brick1.png")) {
+        gradient = ctx.createLinearGradient(brick.x, brick.y, brick.x, brick.y + brickHeight);
+        gradient.addColorStop(0, "#FF9933");
+        gradient.addColorStop(0.5, "#FFFFFF");
+        gradient.addColorStop(1, "#138808");
+      } else if (brick.img.src.includes("brick2.png")) {
+        gradient = "#DE2910";
+      } else if (brick.img.src.includes("brick3.png")) {
+        gradient = ctx.createLinearGradient(brick.x, brick.y, brick.x, brick.y + brickHeight);
+        gradient.addColorStop(0, "#024FA2");
+        gradient.addColorStop(0.5, "#FFFFFF");
+        gradient.addColorStop(1, "#024FA2");
+      } else {
+        gradient = "#FFFFFF";
+      }
+
+      ctx.strokeStyle = gradient;
+      ctx.lineWidth = 4;
+      ctx.strokeRect(brick.x + offsetX, brick.y + offsetY, drawWidth, drawHeight);
+
+      brick.y += brickSpeed;
+      if (!brick.blasting && brick.y > canvas.height) {
+        bricks.splice(index, 1);
+      }
+    });
+  }
+
+  // Handle user input
+  function moveVehicle() {
+    if (leftKey && vehicleX > 0) {
+      vehicleX -= vehicleSpeed;
+    }
+    if (rightKey && vehicleX < canvas.width - vehicleWidth) {
+      vehicleX += vehicleSpeed;
+    }
+  }
+
+  // Reset game
+  function resetGame() {
+    vehicleX = 1 * roadWidth + laneMargin; // start in middle lane
+    vehicleY = canvas.height - vehicleHeight - 40;
+    bricks = [];
+    score = 0;
+    gameOver = false;
+  }
+
+  // Game loop
+  function gameLoop() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    ctx.font = "bold 40px sans-serif";
+    ctx.fillStyle = "#ffffff";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "top";
+    ctx.shadowColor = "black";
+    ctx.shadowBlur = 10;
+    ctx.fillText("Score: " + score, canvas.width / 2, 20);
+    ctx.shadowBlur = 0;
+
+    drawRoads();
+    drawVehicle();
+    createBricks();
+    drawBricks();
+    moveVehicle();
+    stripeOffset += 4;
+
+    requestAnimationFrame(gameLoop);
+  }
+
+  // Event listeners for controls
+  window.addEventListener("keydown", (e) => {
+    if (e.key === "ArrowLeft") leftKey = true;
+    if (e.key === "ArrowRight") rightKey = true;
+    if (e.code === "Space" && gameOver) resetGame();
+  });
+
+  window.addEventListener("keyup", (e) => {
+    if (e.key === "ArrowLeft") leftKey = false;
+    if (e.key === "ArrowRight") rightKey = false;
+  });
+
+  // Click handler to blast bricks
+  canvas.addEventListener("click", (e) => {
+    const rect = canvas.getBoundingClientRect();
+    const clickX = e.clientX - rect.left;
+    const clickY = e.clientY - rect.top;
+
+    for (let i = 0; i < bricks.length; i++) {
+      const brick = bricks[i];
+      const w = brickWidth;
+      const h = brickHeight;
+      if (
+        clickX >= brick.x && clickX <= brick.x + w &&
+        clickY >= brick.y && clickY <= brick.y + h
+      ) {
+        brick.blasting = true;
+        brick.scale = 1;
+
+        // Stop all sounds
+        brickSounds.forEach(sound => {
+          sound.pause();
+          sound.currentTime = 0;
+        });
+
+        // Play related sound
+        const soundIndex = obstacleImgs.findIndex(img => img.src === brick.img.src);
+        if (brickSounds[soundIndex]) {
+          brickSounds[soundIndex].play();
+        }
+
+        score++;
+        break;
+      }
+    }
+  });
+
+  // Start the game loop
+  // gameLoop();
+</script>
+
+</body>
+</html>
