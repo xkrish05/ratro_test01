@@ -54,7 +54,15 @@
   const backgroundMusic = new Audio("background.mp3");
   backgroundMusic.loop = true;
   backgroundMusic.volume = 0.8;
-  backgroundMusic.play();
+  // Play background music after first user interaction (autoplay policy fix)
+  window.addEventListener("click", function startMusicOnce() {
+    backgroundMusic.play();
+    window.removeEventListener("click", startMusicOnce);
+  });
+  window.addEventListener("keydown", function startMusicOnceKey() {
+    backgroundMusic.play();
+    window.removeEventListener("keydown", startMusicOnceKey);
+  });
 
   // Set canvas size to match the bounding box of #av-wrapper
   const wrapperRect = document.getElementById("av-wrapper").getBoundingClientRect();
@@ -318,6 +326,32 @@
     if (e.key === "ArrowLeft") leftKey = false;
     if (e.key === "ArrowRight") rightKey = false;
   });
+
+  // --- Mobile swipe controls ---
+let touchStartX = null;
+
+canvas.addEventListener('touchstart', function(e) {
+  touchStartX = e.touches[0].clientX;
+});
+
+canvas.addEventListener('touchend', function(e) {
+  if (touchStartX === null) return;
+  const touchEndX = e.changedTouches[0].clientX;
+  const dx = touchEndX - touchStartX;
+  const swipeThreshold = 30; // Minimum swipe distance (px)
+  if (Math.abs(dx) > swipeThreshold) {
+    if (dx > 0) {
+      // Swipe right
+      rightKey = true;
+      setTimeout(() => rightKey = false, 60); // Quick pulse
+    } else {
+      // Swipe left
+      leftKey = true;
+      setTimeout(() => leftKey = false, 60); // Quick pulse
+    }
+  }
+  touchStartX = null;
+});
 
   // Click handler to blast bricks
   canvas.addEventListener("click", (e) => {
